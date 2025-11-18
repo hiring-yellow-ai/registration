@@ -25,9 +25,10 @@
     function gapiLoaded() {
       gapi.load('client', initializeGapiClient);
     }
-
+    const api_key = 'AIzaSyAoIJyeKPExu99g57UcCCOQj4VvEwjDX-A';
     async function initializeGapiClient() {
       await gapi.client.init({
+        apiKey:api_key, // 
         // discoveryDocs are vital for the API calls to work later
         discoveryDocs: [
           "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
