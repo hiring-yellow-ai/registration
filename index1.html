@@ -12,38 +12,36 @@
   <button id="authBtn" onclick="handleAuthClick()" disabled>Authorize & Get Data</button>
   <button id="signoutBtn" onclick="handleSignoutClick()" disabled>Sign Out</button>
 
-  <pre id="content" style="white-space: pre-wrap;"></pre>
+  <pre id="content" style="white-space: pre-wrap;">Please click "Authorize & Get Data" to connect.</pre>
 
   <script>
     // YOUR CLIENT_ID AND API_KEY
     const CLIENT_ID = '590439081250-9t6su7ram9pg0jiasdhgju1fghmqe530.apps.googleusercontent.com';
-    const API_KEY = 'AIzaSyAoIJyeKPExu99g57UcCCOQj4VvEwjDX-A'; // Only for unauthenticated access or general API usage
+    const API_KEY = 'AIzaSyAoIJyeKPExu99g57UcCCOQj4VvEwjDX-A';
     
-    // Scopes requested for user data and APIs
-    const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/gmail.readonly profile email'; 
-    // Added 'profile' and 'email' scopes to fetch user info
+    // Scopes needed: 'profile' and 'email' for user info, 'openid' is often implicitly useful for identity.
+    const SCOPES = 'openid profile email'; 
 
     let tokenClient;
     let gapiClientReady = false; // Flag for gapi.client and loaded APIs
     let gisInited = false;       // Flag for Google Identity Services initialization
+
+    // This variable will hold the access token and user info
+    let user_data_access_token = null; 
 
     // Called when the 'gapi.js' script is loaded
     function gapiLoaded() {
       gapi.load('client', async () => {
         try {
           await gapi.client.init({
-            apiKey: API_KEY, // Used for identifying your project. For authenticated calls, OAuth token takes precedence.
-            // discoveryDocs: [ // No longer needed if using gapi.client.load() for specific APIs
-            //   "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
-            //   "https://gmail.googleapis.com/$discovery/rest?version=v1"
-            // ],
+            apiKey: API_KEY, 
           });
 
           // Load specific APIs after gapi.client.init
-          // This ensures the API definitions (drive, gmail) are available
-          await gapi.client.load('drive', 'v3');
-          await gapi.client.load('gmail', 'v1');
-          console.log("Google Drive and Gmail APIs loaded successfully.");
+          // Only 'oauth2' is strictly needed for userinfo.
+          await gapi.client.load('oauth2', 'v2'); 
+          
+          console.log("Google OAuth2 API loaded successfully.");
           gapiClientReady = true; // Mark gapi client and APIs as ready
           maybeEnableButtons();
         } catch (error) {
@@ -79,16 +77,37 @@
       tokenClient.callback = async (resp) => {
         if (resp.error) {
           console.error("Authentication error:", resp);
-          document.getElementById('content').innerText = "Authentication failed. See console for details.";
+          document.getElementById('content').innerText = "Authentication failed. Please try again or check console for details.";
+          user_data_access_token = null; // Clear the variable on error
           return; // Stop execution on error
         }
-        console.log("Access token obtained.");
-        document.getElementById('content').innerText = 'Authenticated successfully!\n'; // Clear previous content and show success
+        
+        console.log("Access token obtained successfully.");
+        
+        // Get the access token
+        const accessToken = gapi.client.getToken().access_token;
 
-        // Fetch user info and then list files
-        await getUserInfo();
-        await listFiles();
-        // await listEmails(); // Uncomment when ready to fetch emails
+        // Fetch user info
+        let userInfo = null;
+        try {
+          const userResponse = await gapi.client.oauth2.userinfo.get(); 
+          userInfo = userResponse.result;
+          console.log('Successfully fetched User Info:', userInfo);
+        } catch (err) {
+          console.error('Error fetching user info after token acquisition:', err);
+          document.getElementById('content').innerText = "Authentication successful, but couldn't fetch user details. See console.";
+          // Even if user info fails, we might still have the token
+          userInfo = { error: "Failed to fetch user info" }; 
+        }
+
+        // Store the access token and user info in the global variable
+        user_data_access_token = {
+          accessToken: accessToken,
+          user: userInfo
+        };
+        console.log("User Data and Access Token stored:", user_data_access_token);
+        
+        document.getElementById('content').innerText = `You're successfully logged into Yellow AI!\nWelcome, ${userInfo ? userInfo.name : 'User'}.`;
       };
 
       // Check if there's an existing token
@@ -107,86 +126,11 @@
       if (token !== null) {
         google.accounts.oauth2.revoke(token.access_token); // Revoke the token
         gapi.client.setToken(''); // Clear the token from gapi.client
-        document.getElementById('content').innerText = 'Signed out.';
-        console.log("User signed out.");
+        user_data_access_token = null; // Clear the stored data
+        document.getElementById('content').innerText = 'Signed out. Please click "Authorize & Get Data" to connect again.';
+        console.log("User signed out. user_data_access_token is now null.");
       }
     }
-
-    // Fetches user profile information
-    async function getUserInfo() {
-      if (!gapiClientReady) {
-        console.error('Google APIs not ready to fetch user info.');
-        document.getElementById('content').innerText += '\nGoogle APIs not ready to fetch user info.';
-        return;
-      }
-      try {
-        const response = await gapi.client.oauth2.userinfo.get(); // Using the oauth2 API for userinfo
-        const user = response.result;
-        console.log('User Info:', user);
-        document.getElementById('content').innerText += `\nWelcome, ${user.name} (${user.email})\n`;
-      } catch (err) {
-        console.error('Error fetching user info:', err);
-        document.getElementById('content').innerText += '\nError fetching user info: ' + (err.message || JSON.stringify(err));
-      }
-    }
-
-    // Lists files from Google Drive
-    async function listFiles() {
-      if (!gapiClientReady) {
-        console.error('Google APIs not ready to list Drive files.');
-        document.getElementById('content').innerText += '\nGoogle APIs not ready to list Drive files.';
-        return;
-      }
-      try {
-        const response = await gapi.client.drive.files.list({
-          'pageSize': 10,
-          'fields': 'files(id, name)',
-        });
-        const files = response.result.files;
-        if (!files || files.length == 0) {
-          document.getElementById('content').innerText += 'No Drive files found.';
-          return;
-        }
-        const output = files.reduce(
-          (str, file) => `${str}${file.name} (${file.id})\n`,
-          '\nDrive Files:\n');
-        document.getElementById('content').innerText += output;
-        console.log("Drive files listed successfully.");
-      } catch (err) {
-        console.error('Error listing files:', err);
-        document.getElementById('content').innerText += '\nError listing files: ' + (err.message || JSON.stringify(err));
-      }
-    }
-
-    // Placeholder for listing emails (requires Gmail API to be loaded and 'gmail.readonly' scope)
-    // async function listEmails() {
-    //   if (!gapiClientReady) {
-    //     console.error('Google APIs not ready to list Gmail messages.');
-    //     document.getElementById('content').innerText += '\nGoogle APIs not ready to list Gmail messages.';
-    //     return;
-    //   }
-    //   try {
-    //     const response = await gapi.client.gmail.users.messages.list({
-    //       'userId': 'me',
-    //       'maxResults': 10,
-    //     });
-    //     const messages = response.result.messages;
-    //     if (!messages || messages.length === 0) {
-    //       document.getElementById('content').innerText += '\nNo Gmail messages found.';
-    //       return;
-    //     }
-    //     let output = '\nGmail Messages:\n';
-    //     for (const message of messages) {
-    //       output += `Message ID: ${message.id}\n`;
-    //     }
-    //     document.getElementById('content').innerText += output;
-    //     console.log("Gmail messages listed successfully.");
-    //   } catch (err) {
-    //     console.error('Error listing emails:', err);
-    //     document.getElementById('content').innerText += '\nError listing emails: ' + (err.message || JSON.stringify(err));
-    //   }
-    // }
-
   </script>
 </body>
 </html>
